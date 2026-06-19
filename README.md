@@ -79,3 +79,23 @@ docker build -t talent-engine-abhi .
 
 # Run the system vector engine & validation suite
 docker run --rm talent-engine-abhi
+
+
+---
+
+## 📊 System Execution Previews
+
+### 🎯 Interactive Streamlit Dashboard (`app.py`)
+The dark-mode interactive workspace parses and visualizes candidate distribution metrics dynamically:
+
+![Streamlit Top Ranked Candidates Matrix](./assets/appui1.png)
+
+### ⚙️ Verification Suite Integration
+Automated confirmation log confirming system local environment and configuration pipeline compliance:
+
+![Local Workspace Connectivity Specifications](./assets/appui2.png)
+
+### 🚀 Production REST API Swagger Gateway (`api_server.py`)
+Exposing high-performance endpoints (`/api/v1/health` and `/api/v1/candidates/top`) compliant with modern API blueprints:
+
+![FastAPI Interactive Documentation Gateway](./assets/restapiswaggergetway.png)
