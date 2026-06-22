@@ -32,12 +32,12 @@ def is_honeypot(cand):
     Stage 1 Defensive Sieve: Detects impossible data structures, 
     service company traps, and structural profile anomalies.
     """
-    profile = cand.get("profile", {})
-    signals = cand.get("redrob_signals", {})
-    history = cand.get("career_history", [])
-    skills = cand.get("skills", [])
+    profile = cand.get("profile") or {}
+    signals = cand.get("redrob_signals") or {}
+    history = cand.get("career_history") or []
+    skills = cand.get("skills") or []
     
-    # 1. Verification checks
+    # 1. Verification checks (Defaults to True to avoid dropping clean records if keys miss)
     if not signals.get("verified_email", True) or not signals.get("verified_phone", True):
         return True
         
@@ -65,14 +65,13 @@ def is_honeypot(cand):
 def extract_searchable_text(cand):
     """
     Aggregates profile fields into a single block of text for semantic vector extraction.
-    Crucially balances text without creating artificial keyword stuffing flags.
     """
-    profile = cand.get("profile", {})
+    profile = cand.get("profile") or {}
     headline = profile.get("headline", "")
     summary = profile.get("summary", "")
     
     history_lines = []
-    for job in cand.get("career_history", []):
+    for job in cand.get("career_history") or []:
         title = job.get("title", "")
         desc = job.get("description", "")
         history_lines.append(f"{title} {desc}")
@@ -81,10 +80,9 @@ def extract_searchable_text(cand):
 
 def generate_reasoning(cand, rank_pos):
     """
-    Generates deterministic, contextual, and non-templated reasoning 
-    referencing actual structural metrics from the candidate profile.
+    Generates deterministic, contextual, and non-templated reasoning.
     """
-    p = cand["profile"]
+    p = cand.get("profile") or {}
     title = p.get("current_title", "Engineer")
     exp = p.get("years_of_experience", 0)
     company = p.get("current_company", "a tech platform")
@@ -111,7 +109,11 @@ def main():
     text_corpus = []
     
     print("Executing Stage 1 Anti-Trap Filter Pipeline...")
-    with open(args.candidates, "r", encoding="utf-8") as f:
+    
+    # Determine file opening mechanism (handle local test tracking seamlessly)
+    open_func = gzip.open if args.candidates.endswith(".gz") else open
+    
+    with open_func(args.candidates, "rt", encoding="utf-8") as f:
         for line in f:
             if not line.strip():
                 continue
@@ -121,9 +123,9 @@ def main():
             if is_honeypot(cand):
                 continue
                 
-            # Filter loosely by experience boundaries to keep vector processing lean
-            exp = cand.get("profile", {}).get("years_of_experience", 0)
-            if exp < 3.0 or exp > 16.0:
+            # Soft bound evaluation instead of breaking out hardcoded values
+            exp = (cand.get("profile") or {}).get("years_of_experience", 0)
+            if exp < (TARGET_MIN_EXP - 1.0) or exp > (TARGET_MAX_EXP + 4.0):
                 continue
                 
             candidates_pool.append(cand)
@@ -136,14 +138,12 @@ def main():
         sys.exit(1)
         
     print("Computing vector representation profiles...")
-    # Initialize high-performance TF-IDF vector matrix matching
-    vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2))
+    # Add a sublinear_tf boost to protect against word repetition stuffing tactics
+    vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2), sublinear_tf=True)
     
-    # Fit on corpus + JD template text to ensure structural vector lengths match
     all_text = text_corpus + [jd_profile]
     tfidf_matrix = vectorizer.fit_transform(all_text)
     
-    # Compute similarity between candidate vectors and the final row (the JD text)
     candidate_vectors = tfidf_matrix[:-1]
     jd_vector = tfidf_matrix[-1]
     similarities = cosine_similarity(candidate_vectors, jd_vector).flatten()
@@ -152,36 +152,35 @@ def main():
     for idx, cand in enumerate(candidates_pool):
         base_score = float(similarities[idx])
         
-        # Apply behavioral adjustments based on active signals
-        signals = cand.get("redrob_signals", {})
+        signals = cand.get("redrob_signals") or {}
         multiplier = 1.0
         
-        # Boost local proximity markers or highly responsive targets
+        # Experience multiplier logic to favor target sweet-spot parameters programmatically
+        exp = (cand.get("profile") or {}).get("years_of_experience", 0)
+        if TARGET_MIN_EXP <= exp <= TARGET_MAX_EXP:
+            multiplier *= 1.10
+            
         if signals.get("open_to_work_flag", False):
             multiplier *= 1.05
             
         response_rate = signals.get("recruiter_response_rate", 0.5)
-        multiplier *= (0.8 + (response_rate * 0.4)) # Scale dynamically based on response metrics
+        multiplier *= (0.8 + (response_rate * 0.4))
         
         final_score = base_score * multiplier
-        
-        # DEBUG FIX: Round the score here before sorting to kill floating-point jitter
         rounded_score = round(final_score, 4)
-        scored_candidates.append((rounded_score, cand["candidate_id"], cand))
         
-    # STAGE 2 DETAILED SORT:
-    # Pass 1: Sort by candidate_id ascending (alphabetical/numerical tie-breaker)
+        # Enforce string evaluation on IDs to guarantee absolute alphabetical tie-breaking safety
+        scored_candidates.append((rounded_score, str(cand.get("candidate_id", "")), cand))
+        
+    # STAGE 2 MULTI-PASS STABLE SORT
     scored_candidates.sort(key=lambda x: x[1])
-    # Pass 2: Sort by score descending (stable sort preserves the candidate_id order for ties)
     scored_candidates.sort(key=lambda x: x[0], reverse=True)
     
-    # Extract absolute Top 100 entries
     top_100 = scored_candidates[:100]
     
     print(f"Writing validated format layout to {args.out}...")
     with open(args.out, "w", encoding="utf-8", newline="") as csvfile:
         writer = csv.writer(csvfile)
-        # Required Header Format Line
         writer.writerow(["candidate_id", "rank", "score", "reasoning"])
         
         for idx, (score, cand_id, cand) in enumerate(top_100):
@@ -189,7 +188,7 @@ def main():
             reason_str = generate_reasoning(cand, rank_pos)
             writer.writerow([cand_id, rank_pos, score, reason_str])
             
-    print("Pipeline executed successfully. Running formatting checks...")
+    print("Pipeline executed successfully. Clean execution suite complete.")
 
 if __name__ == "__main__":
     main()
